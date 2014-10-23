@@ -1,3 +1,4 @@
+import pickle
 import os
 import sys
 import pythoncom, pyHook 
@@ -9,6 +10,13 @@ from multiprocessing import *
 import time
 import natsort
 import atexit
+import logging
+
+def log_uncaught_exceptions(ex_cls, ex, tb):
+
+    logging.critical(''.join(traceback.format_tb(tb)))
+    logging.critical('{0}: {1}'.format(ex_cls, ex))
+
 
 class vlc(object):
     def __init__(self,filepath,vlcp,scriptpath):
@@ -43,6 +51,12 @@ class vlc(object):
         
         f=self.get_new_file(-1)
         self.restart(f)      
+
+    def play_from_record(self):
+        f=self.get_record()
+        # print f
+        if f:
+            self.restart( os.path.join(os.path.split(self.fn)[0],f) )
     
     def get_new_file(self,switch):        
         dirname= os.path.dirname(self.fn)    
@@ -59,10 +73,19 @@ class vlc(object):
             if currentindex>0:i=currentindex-1  
         return files[i] 
 
+    def get_record(self):
+        dirname=os.path.split(self.fn)[0]
+
+        dbase=pickle.load(open('d:/vlcdatabase.p')) if os.path.isfile('d:/vlcdatabase.p') else {}
+        return dbase.get(dirname,None)
+
     def savestate(self,scriptpath):
         f=open(os.path.join(scriptpath,'lastfile.txt'),'w')
         f.write(self.fn)
         f.close()
+        dbase=pickle.load(open('d:/vlcdatabase.p')) if os.path.isfile('d:/vlcdatabase.p') else {}
+        dbase[os.path.split(self.fn)[0]]=os.path.split(self.fn)[1]
+        pickle.dump(dbase,open('d:/vlcdatabase.p','w'))
         print "state saved"   
 
 class vlcThread(threading.Thread):
@@ -80,7 +103,7 @@ class vlcThread(threading.Thread):
             if vlcinstance.is_alive(): last_alive=time.time()
             else: 
                 print time.time()-last_alive
-                if (time.time()-last_alive)>3:
+                if (time.time()-last_alive)>1:
                     sys.exit(0)
                     break
             if(self.flag.value==1):
@@ -88,6 +111,9 @@ class vlcThread(threading.Thread):
                 self.flag.value=0
             if(self.flag.value==-1):
                 vlcinstance.play_prev()
+                self.flag.value=0
+            if(self.flag.value==2):
+                vlcinstance.play_from_record()
                 self.flag.value=0
                 
 class hookThread(threading.Thread):
@@ -103,6 +129,9 @@ class hookThread(threading.Thread):
         if event.Key=='End' and 'vlc' in event.WindowName.lower():
             self.flag.value =1
             return False
+        if event.Key=='F2'  and 'vlc' in event.WindowName.lower():
+            self.flag.value =2
+            return False
         return True
     def run(self):
         hm = pyHook.HookManager()
@@ -110,11 +139,25 @@ class hookThread(threading.Thread):
         hm.HookKeyboard()    
         pythoncom.PumpMessages()
 
+class LoggerWriter:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
 
-
+    def write(self, message):
+        if message != '\n':
+            self.logger.log(self.level, message)
 
 
 def main():
+    logging.basicConfig(
+            level=logging.DEBUG,
+            filename='D:/vlc.log',
+            filemode='w')
+    logger = logging.getLogger("demo")
+    # sys.excepthook = log_uncaught_exceptions
+    # logging.debug('About to do f().')
+    sys.stderr=LoggerWriter(logger, logging.DEBUG)
     scriptpath=os.path.dirname(sys.argv[0])
     #print scriptpath
     vlcpath='vlc'
